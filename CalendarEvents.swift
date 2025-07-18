@@ -27,15 +27,38 @@ func getExecutablePath() -> URL? {
 let store = EKEventStore()
 let semaphore = DispatchSemaphore(value: 0)
 
-// How many days ahead to look (up to the end of that day, 1 being today)
-// Parse command-line argument for number of days to fetch (default is 1)
-let defaultDaysToFetch = 1
-let daysToFetch: Int = {
-    if CommandLine.arguments.count > 1, let arg = Int(CommandLine.arguments[1]), arg > 0 {
-        return arg
-    }
-    return defaultDaysToFetch
+// How much time ahead to look (default is 1 day)
+// Parse command-line argument for time window (e.g. 1d, 2h, 30m, 1)
+let defaultTimeInterval: TimeInterval = 24 * 60 * 60 // 1 day in seconds
+
+let verbose: Bool = CommandLine.arguments.contains("-v") || CommandLine.arguments.contains("--verbose")
+let timeIntervalToFetch: TimeInterval = {
+    let arg = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : nil
+    return parseTimeArgument(arg)
 }()
+
+func parseTimeArgument(_ arg: String?) -> TimeInterval {
+    guard let arg = arg else { return defaultTimeInterval }
+    let trimmed = arg.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    if let intVal = Int(trimmed) {
+        return TimeInterval(intVal) * 24 * 60 * 60 // treat as days
+    }
+    let regex = try! NSRegularExpression(pattern: #"^(\d+)([smhd])$"#)
+    if let match = regex.firstMatch(in: trimmed, range: NSRange(trimmed.startIndex..., in: trimmed)),
+       let valueRange = Range(match.range(at: 1), in: trimmed),
+       let unitRange = Range(match.range(at: 2), in: trimmed) {
+        let value = Double(trimmed[valueRange]) ?? 0
+        let unit = trimmed[unitRange]
+        switch unit {
+        case "s": return value
+        case "m": return value * 60
+        case "h": return value * 60 * 60
+        case "d": return value * 24 * 60 * 60
+        default: return defaultTimeInterval
+        }
+    }
+    return defaultTimeInterval
+}
 
 func loadAllowedCalendars(from allCalendars: [EKCalendar]) -> [EKCalendar] {
     guard let binaryDir = getExecutablePath() else {
@@ -44,7 +67,9 @@ func loadAllowedCalendars(from allCalendars: [EKCalendar]) -> [EKCalendar] {
     }
 
     let fileURL = binaryDir.appendingPathComponent("calendars.txt")
-    print("Looking for calendars.txt at: \(fileURL.path)")
+    if verbose {
+        print("Looking for calendars.txt at: \(fileURL.path)")
+    }
 
     do {
         let contents = try String(contentsOf: fileURL, encoding: .utf8)
@@ -74,11 +99,13 @@ func fetchEvents() {
     // Filter calendars by name
     let selectedCalendars = loadAllowedCalendars(from: allCalendars)
 
-    print("Selected calendars:")
-    for cal in selectedCalendars {
-        print("- \(cal.title)")
+    if verbose {
+        print("Selected calendars:")
+        for cal in selectedCalendars {
+            print("- \(cal.title)")
+        }
+        print("-----")
     }
-    print("-----")
 
     if selectedCalendars.isEmpty {
         print("No matching calendars found.")
@@ -89,32 +116,44 @@ func fetchEvents() {
     var calendar = Calendar.current
     calendar.locale = Locale(identifier: "en_US_POSIX")
 
-    if let targetDay = calendar.date(byAdding: .day, value: daysToFetch - 1, to: now),
-        let endOfTargetDay = calendar.date(bySettingHour: 23, minute: 59, second: 59, of: targetDay) {
+    let endOfWindow = now.addingTimeInterval(timeIntervalToFetch)
 
-        let predicate = store.predicateForEvents(withStart: now, end: endOfTargetDay, calendars: selectedCalendars)
-        let events = store.events(matching: predicate).sorted { $0.startDate < $1.startDate }
+    let predicate = store.predicateForEvents(withStart: now, end: endOfWindow, calendars: selectedCalendars)
+    let events = store.events(matching: predicate).sorted { $0.startDate < $1.startDate }
 
-        let timeFormatter = DateFormatter()
-        timeFormatter.dateFormat = "HH:mm"
-        timeFormatter.locale = Locale(identifier: "en_US_POSIX")
+    let timeFormatter = DateFormatter()
+    timeFormatter.dateFormat = "HH:mm"
+    timeFormatter.locale = Locale(identifier: "en_US_POSIX")
 
-        let dateFormatter = DateFormatter()
-        dateFormatter.dateFormat = "yyyy-MM-dd"
-        dateFormatter.locale = Locale(identifier: "en_US_POSIX")
+    let dateFormatter = DateFormatter()
+    dateFormatter.dateFormat = "yyyy-MM-dd"
+    dateFormatter.locale = Locale(identifier: "en_US_POSIX")
 
-        for event in events where event.endDate > now {
-            let startTime = timeFormatter.string(from: event.startDate)
-            let endTime = timeFormatter.string(from: event.endDate)
-            let dateString = dateFormatter.string(from: event.startDate)
-            let title = (event.title ?? "(No Title)")
-                .replacingOccurrences(of: "\u{00A0}", with: " ")    // Replace non-breaking space
-                .replacingOccurrences(of: "\u{2013}", with: "-")    // Replace en dash
+    for event in events where event.endDate > now {
+        let startTime = timeFormatter.string(from: event.startDate)
+        let endTime = timeFormatter.string(from: event.endDate)
+        let dateString = dateFormatter.string(from: event.startDate)
+        let title = (event.title ?? "(No Title)")
+            .replacingOccurrences(of: "\u{00A0}", with: " ")    // Replace non-breaking space
+            .replacingOccurrences(of: "\u{2013}", with: "-")    // Replace en dash
 
+        if CommandLine.arguments.contains("--relative") {
+            let interval = event.startDate.timeIntervalSince(now)
+            let minutes = Int(interval / 60)
+            let hours = minutes / 60
+            let mins = minutes % 60
+            let relativeString: String
+            if interval < 0 {
+                relativeString = "started \(-minutes) min ago"
+            } else if hours > 0 {
+                relativeString = "in \(hours)h \(mins)m"
+            } else {
+                relativeString = "in \(mins)m"
+            }
+            print("\(title) | \(relativeString)")
+        } else {
             print("\(dateString) \(startTime)-\(endTime) | \(title)")
         }
-    } else {
-        print("Failed to calculate end date")
     }
 }
 
