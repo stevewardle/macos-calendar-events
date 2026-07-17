@@ -27,22 +27,64 @@ Only events from calendars listed in this file will be shown. If this file is no
 
 ## Usage of compiled binary
 
-You can pass the number of days to fetch as a command-line argument when running the compiled binary.
-For example, to fetch events for today and the next 2 days (3 days total):
+You can pass a time window as a command-line argument when running the compiled binary.
+For example, to fetch events for the next 2 hours:
+
+```bash
+~/.config/bin/utils/calendar_events 2h
+```
+
+You can also pass the number of days to fetch. For example, to fetch events for today and the next 2 days (3 days total):
 
 ```bash
 ~/.config/bin/utils/calendar_events 3
 ```
 
-If no argument is provided, the default is 1 (only today). See [my sketchybar config](https://github.com/zigotica/tilde/tree/master/.config/sketchybar/items/ical) for an example of this.
+If no argument is provided, the default is 1 day. See [my sketchybar config](https://github.com/zigotica/tilde/tree/master/.config/sketchybar/items/ical) for an example of this.
+
+### Options
+
+```bash
+calendar_events [time_window] [options]
+```
+
+- `--relative` — show time until/since each event starts
+- `--json` — output events as a JSON array
+- `--active-only` — only show events happening right now
+- `-v`, `--verbose` — print calendar selection details to stderr
+- `-h`, `--help` — show usage
+
+Examples:
+
+```bash
+# Events currently in progress, as JSON
+calendar_events 1h --active-only --json
+
+# Upcoming events with relative times (SketchyBar)
+calendar_events 1h --relative
+```
 
 ## Output
 
-The binary prints upcoming events to stdout in this format:
+By default, the binary prints upcoming events to stdout in this format:
 
 ```text
-09:00–10:00 | Daily Standup
-14:30–15:00 | Design Review
+2026-07-17 09:00-10:00 | Daily Standup
+2026-07-17 14:30-15:00 | Design Review
+```
+
+With `--json`, output looks like:
+
+```json
+[
+  {
+    "active": true,
+    "calendar": "Calendar",
+    "end": 1721238300,
+    "start": 1721234567,
+    "title": "Daily Standup"
+  }
+]
 ```
 
 Use the output as input for your SketchyBar plugin or other automation scripts. Enjoy a TCC-free, native way to display calendar events on your Mac!
